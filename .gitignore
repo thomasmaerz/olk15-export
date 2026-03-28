@@ -1,0 +1,22 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.pytest_cache/
+
+# User output directories
+output/
+attachments/
+attachments_flat/
+Thunderbird_Root/
+messages/
+sources/
+
+# Internal plans, logs, and tests
+PLAN*.md
+test_*.py
+cleanup_eml.py
+patch_eml.py
+*.log
+summary.csv
