@@ -1,0 +1,13 @@
+name: opencode
+on:
+  issue_comment:
+    types: [created]
+jobs:
+  opencode:
+    if: contains(github.event.comment.body, "/oc")
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
