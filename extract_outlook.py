@@ -42,11 +42,12 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
         cursor.execute("""
             SELECT PathToDataFile, Message_SenderList, Message_SenderAddressList, 
                    Message_DisplayTo, Message_ToRecipientAddressList, Message_CCRecipientAddressList,
-                   Message_NormalizedSubject, Message_TimeReceived, Message_TimeSent, Message_MessageID
+                   Message_NormalizedSubject, Message_TimeReceived, Message_TimeSent, Message_MessageID,
+                   Threads_ThreadID
             FROM Mail
         """)
         for row in cursor:
-            path, s_list, s_addr, t_list, t_addr, cc_addr, subj, date_ts, sent_ts, msg_id = row
+            path, s_list, s_addr, t_list, t_addr, cc_addr, subj, date_ts, sent_ts, msg_id, thread_id = row
             if not path: continue
             uuid = pathlib.Path(path).stem
             meta[uuid] = {
@@ -57,6 +58,7 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
                 "date": date_ts,
                 "sent_date": sent_ts,
                 "message_id": msg_id,
+                "thread_id": thread_id,
                 "attachments": []
             }
             
