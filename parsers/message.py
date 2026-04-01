@@ -147,6 +147,7 @@ def parse_message(data: bytes, meta: dict | None = None, attachments: list[tuple
         if meta.get("cc"): msg["Cc"] = meta["cc"]
         if meta.get("subject"): msg["Subject"] = meta["subject"]
         if meta.get("message_id"): msg["Message-ID"] = meta["message_id"]
+        if meta.get("thread_id"): msg["X-Outlook-Thread-ID"] = meta["thread_id"]
         
         ts_received = meta.get("date", -1)
         ts_sent = meta.get("sent_date", -1)
