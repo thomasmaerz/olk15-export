@@ -1,5 +1,5 @@
 from __future__ import annotations
-import csv, email, email.policy, email.message, pathlib, logging, datetime, re, mailbox
+import csv, email, email.policy, email.message, pathlib, logging, datetime, re, os
 from email.parser import BytesParser
 
 log = logging.getLogger(__name__)
@@ -14,7 +14,6 @@ class EmlWriter:
         
         # Initialize Maildir
         self.maildir_path = self.out / "Maildir"
-        self._maildir = mailbox.Maildir(str(self.maildir_path), factory=None)
         
         self._csv_path = self.out / "summary.csv"
         self._csv_file = open(self._csv_path, "w", newline="", encoding="utf-8")
@@ -44,9 +43,14 @@ class EmlWriter:
         eml_path = eml_dir / f"{uuid}.eml"
         eml_path.write_bytes(mime_bytes)
 
-        # Add to Maildir
+        # Add to Maildir (write directly to cur/ with proper Maildir suffix)
         try:
-            self._maildir.add(mime_bytes)
+            cur_dir = self.maildir_path / "cur"
+            cur_dir.mkdir(parents=True, exist_ok=True)
+            import uuid as uuid_mod
+            unique_name = f"{datetime.datetime.now().timestamp()}.{uuid_mod.uuid4().hex[:8]}P{os.getpid()}MThomass-MacBook-Pro.local:2,"
+            cur_path = cur_dir / unique_name
+            cur_path.write_bytes(mime_bytes)
         except Exception as exc:
             log.error("Failed to add message %s to Maildir: %s", uuid, exc)
 

@@ -42,11 +42,12 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
         cursor.execute("""
             SELECT PathToDataFile, Message_SenderList, Message_SenderAddressList, 
                    Message_DisplayTo, Message_ToRecipientAddressList, Message_CCRecipientAddressList,
-                   Message_NormalizedSubject, Message_TimeReceived, Message_TimeSent, Message_MessageID
+                   Message_NormalizedSubject, Message_TimeReceived, Message_TimeSent, Message_MessageID,
+                   Threads_ThreadID
             FROM Mail
         """)
         for row in cursor:
-            path, s_list, s_addr, t_list, t_addr, cc_addr, subj, date_ts, sent_ts, msg_id = row
+            path, s_list, s_addr, t_list, t_addr, cc_addr, subj, date_ts, sent_ts, msg_id, thread_id = row
             if not path: continue
             uuid = pathlib.Path(path).stem
             meta[uuid] = {
@@ -57,6 +58,7 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
                 "date": date_ts,
                 "sent_date": sent_ts,
                 "message_id": msg_id,
+                "thread_id": thread_id,
                 "attachments": []
             }
             
@@ -86,6 +88,29 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
     writer = EmlWriter(output_dir)
     error_log_path = output_dir / "extract.log"
     with open(error_log_path, "w", encoding="utf-8") as error_log:
+        # --- Phase 2: .olk15MsgSource files (processed first for deduplication priority) ---
+        src_dir = profile / "Data" / "Message Sources"
+        log.info("Counting files in %s...", src_dir)
+        total = sum(1 for _ in walk_files(src_dir, ".olk15MsgSource"))
+        src_files = walk_files(src_dir, ".olk15MsgSource")
+        log.info("Processing %d .olk15MsgSource files...", total)
+        ok = skipped = errors = 0
+        for i, path in enumerate(src_files, 1):
+            if i % 500 == 0:
+                log.info("  sources: %d/%d (ok=%d skipped=%d errors=%d)", i, total, ok, skipped, errors)
+            try:
+                mime = parse_source(path.read_bytes())
+                if mime is None:
+                    skipped += 1
+                    error_log.write(f"SKIP\tsources\t{path.name}\tno MIME markers found\n")
+                    continue
+                writer.write_eml(path.stem, mime, source="sources")
+                ok += 1
+            except Exception as exc:
+                errors += 1
+                error_log.write(f"ERROR\tsources\t{path.name}\t{exc}\n")
+        log.info("Sources done: ok=%d skipped=%d errors=%d", ok, skipped, errors)
+
         # --- Phase 1: .olk15Message files ---
         msg_dir = profile / "Data" / "Messages"
         log.info("Counting files in %s...", msg_dir)
@@ -119,29 +144,6 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                 errors += 1
                 error_log.write(f"ERROR\tmessages\t{path.name}\t{exc}\n")
         log.info("Messages done: ok=%d skipped=%d errors=%d", ok, skipped, errors)
-
-        # --- Phase 2: .olk15MsgSource files ---
-        src_dir = profile / "Data" / "Message Sources"
-        log.info("Counting files in %s...", src_dir)
-        total = sum(1 for _ in walk_files(src_dir, ".olk15MsgSource"))
-        src_files = walk_files(src_dir, ".olk15MsgSource")
-        log.info("Processing %d .olk15MsgSource files...", total)
-        ok = skipped = errors = 0
-        for i, path in enumerate(src_files, 1):
-            if i % 500 == 0:
-                log.info("  sources: %d/%d (ok=%d skipped=%d errors=%d)", i, total, ok, skipped, errors)
-            try:
-                mime = parse_source(path.read_bytes())
-                if mime is None:
-                    skipped += 1
-                    error_log.write(f"SKIP\tsources\t{path.name}\tno MIME markers found\n")
-                    continue
-                writer.write_eml(path.stem, mime, source="sources")
-                ok += 1
-            except Exception as exc:
-                errors += 1
-                error_log.write(f"ERROR\tsources\t{path.name}\t{exc}\n")
-        log.info("Sources done: ok=%d skipped=%d errors=%d", ok, skipped, errors)
 
         # --- Phase 3 (optional): .olk15MsgAttachment files ---
         if include_attachments:
