@@ -83,10 +83,14 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
     log.info("Loaded metadata for %d messages.", len(meta))
     return meta
 
-def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path) -> None:
+def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0) -> None:
+    """Run extraction with optional message limit."""
     metadata = load_metadata(profile)
     writer = EmlWriter(output_dir)
     error_log_path = output_dir / "extract.log"
+    
+    success_count = 0
+    write_ok = True
     with open(error_log_path, "w", encoding="utf-8") as error_log:
         # --- Phase 2: .olk15MsgSource files (processed first for deduplication priority) ---
         src_dir = profile / "Data" / "Message Sources"
@@ -96,6 +100,9 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
         log.info("Processing %d .olk15MsgSource files...", total)
         ok = skipped = errors = 0
         for i, path in enumerate(src_files, 1):
+            if max_messages > 0 and success_count >= max_messages:
+                log.info("Reached max messages limit (%d), stopping sources phase", max_messages)
+                break
             if i % 500 == 0:
                 log.info("  sources: %d/%d (ok=%d skipped=%d errors=%d)", i, total, ok, skipped, errors)
             try:
@@ -104,8 +111,9 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                     skipped += 1
                     error_log.write(f"SKIP\tsources\t{path.name}\tno MIME markers found\n")
                     continue
-                writer.write_eml(path.stem, mime, source="sources")
-                ok += 1
+                if writer.write_eml(path.stem, mime, source="sources"):
+                    ok += 1
+                    success_count += 1
             except Exception as exc:
                 errors += 1
                 error_log.write(f"ERROR\tsources\t{path.name}\t{exc}\n")
@@ -119,6 +127,9 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
         log.info("Processing %d .olk15Message files...", total)
         ok = skipped = errors = 0
         for i, path in enumerate(msg_files, 1):
+            if max_messages > 0 and success_count >= max_messages:
+                log.info("Reached max messages limit (%d), stopping messages phase", max_messages)
+                break
             if i % 1000 == 0:
                 log.info("  messages: %d/%d (ok=%d skipped=%d errors=%d)", i, total, ok, skipped, errors)
             try:
@@ -138,8 +149,9 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                     skipped += 1
                     error_log.write(f"SKIP\tmessages\t{path.name}\tno content found\n")
                     continue
-                writer.write_eml(path.stem, mime, source="messages")
-                ok += 1
+                if writer.write_eml(path.stem, mime, source="messages"):
+                    ok += 1
+                    success_count += 1
             except Exception as exc:
                 errors += 1
                 error_log.write(f"ERROR\tmessages\t{path.name}\t{exc}\n")
@@ -171,6 +183,10 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
             log.info("Attachments done: ok=%d skipped=%d errors=%d", ok, skipped, errors)
 
         writer.flush()
+    if max_messages > 0 and success_count >= max_messages:
+        log.info("Extraction complete. Reached limit of %d messages", max_messages)
+    else:
+        log.info("Extraction complete. Total messages written: %d", success_count)
     log.info("Done. Output in: %s", output_dir)
 
 def main():
@@ -178,6 +194,7 @@ def main():
     parser.add_argument("--output", "-o", default="./output", help="Output directory (default: ./output)")
     parser.add_argument("--profile", default=str(PROFILE_BASE), help="Path to Outlook 15 Main Profile directory")
     parser.add_argument("--include-attachments", action="store_true", help="Also extract attachment files")
+    parser.add_argument("--max-messages", "-n", type=int, default=0, help="Maximum number of messages to extract (0=unlimited)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -195,7 +212,7 @@ def main():
         log.error("Profile directory not found: %s", profile)
         sys.exit(1)
 
-    run(output_dir, args.include_attachments, profile)
+    run(output_dir, args.include_attachments, profile, args.max_messages)
 
 if __name__ == "__main__":
     main()
