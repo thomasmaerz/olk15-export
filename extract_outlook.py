@@ -8,6 +8,7 @@ from parsers.message import parse_message
 from parsers.source import parse_source
 from parsers.attachment import parse_attachment
 from writer import EmlWriter
+from flatten_attachments import run as flatten_attachments
 
 log = logging.getLogger("extract_outlook")
 
@@ -83,7 +84,7 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
     log.info("Loaded metadata for %d messages.", len(meta))
     return meta
 
-def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0) -> None:
+def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False) -> None:
     """Run extraction with optional message limit."""
     metadata = load_metadata(profile)
     writer = EmlWriter(output_dir)
@@ -182,6 +183,15 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                     error_log.write(f"ERROR\tattachments\t{path.name}\t{exc}\n")
             log.info("Attachments done: ok=%d skipped=%d errors=%d", ok, skipped, errors)
 
+        if flatten:
+            att_dir = output_dir / "attachments"
+            flat_dir = att_dir / "flat"
+            if att_dir.exists():
+                log.info("Flattening attachments to %s...", flat_dir)
+                flatten_attachments(att_dir, flat_dir)
+            else:
+                log.warning("No attachments directory found, skipping flatten")
+
         writer.flush()
     if max_messages > 0 and success_count >= max_messages:
         log.info("Extraction complete. Reached limit of %d messages", max_messages)
@@ -193,16 +203,26 @@ def main():
     parser = argparse.ArgumentParser(description="Extract Outlook 15 email data to .eml / .mbox")
     parser.add_argument("--output", "-o", default="./output", help="Output directory (default: ./output)")
     parser.add_argument("--profile", default=str(PROFILE_BASE), help="Path to Outlook 15 Main Profile directory")
-    parser.add_argument("--include-attachments", action="store_true", help="Also extract attachment files")
+    parser.add_argument("--attachments-to-disk", action="store_true", help="Extract attachment files to disk")
+    parser.add_argument("--include-attachments", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--flatten-attachments", action="store_true", help="Flatten and deduplicate extracted attachments into attachments/flat/")
     parser.add_argument("--max-messages", "-n", type=int, default=0, help="Maximum number of messages to extract (0=unlimited)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+    if args.include_attachments:
+        logging.basicConfig(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+        log.warning("--include-attachments is deprecated, use --attachments-to-disk instead")
+    else:
+        logging.basicConfig(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
 
     output_dir = pathlib.Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -212,7 +232,7 @@ def main():
         log.error("Profile directory not found: %s", profile)
         sys.exit(1)
 
-    run(output_dir, args.include_attachments, profile, args.max_messages)
+    run(output_dir, args.attachments_to_disk or args.include_attachments, profile, args.max_messages, flatten=args.flatten_attachments)
 
 if __name__ == "__main__":
     main()

@@ -127,7 +127,10 @@ python3 extract_outlook.py
 python3 extract_outlook.py --output ./my-export
 
 # Include detached attachments
-python3 extract_outlook.py --include-attachments
+python3 extract_outlook.py --attachments-to-disk
+
+# Flatten and deduplicate extracted attachments
+python3 extract_outlook.py --attachments-to-disk --flatten-attachments
 
 # Test with a small subset first
 python3 extract_outlook.py --max-messages 100 --verbose
@@ -142,7 +145,9 @@ python3 extract_outlook.py --profile "/path/to/Outlook 15 Profiles/Main Profile"
 |------|---------|-------------|
 | `--output`, `-o` | `./output` | Output directory for Maildir and attachments |
 | `--profile` | `~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile` | Path to the Outlook 15 profile directory |
-| `--include-attachments` | Off | Also extract `.olk15MsgAttachment` files |
+| `--attachments-to-disk` | Off | Extract attachment files to disk |
+| `--include-attachments` | Off | **Deprecated** — alias for `--attachments-to-disk` |
+| `--flatten-attachments` | Off | Flatten and deduplicate extracted attachments into `attachments/flat/` |
 | `--max-messages`, `-n` | 0 (unlimited) | Stop after processing N messages (useful for testing) |
 | `--verbose`, `-v` | Off | Enable debug logging |
 
@@ -158,7 +163,9 @@ output/
 │       ├── 1775174416.643668.78caa172P49321MThomass-MacBook-Pro.local:2,
 │       └── ...
 ├── attachments/
-│   └── <uuid>/                       # Detached attachments per message
+│   └── <uuid>/                       # Detached attachments per message (when --attachments-to-disk is used)
+│       └── <filename>
+│   └── flat/                         # Flattened, deduplicated attachments (when --flatten-attachments is used)
 │       └── <filename>
 ├── summary.csv                       # Index of all extracted emails
 └── extract.log                       # Extraction log (skips, errors)
