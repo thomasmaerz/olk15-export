@@ -7,16 +7,11 @@ venv/
 
 # User output directories
 output/
+output_fresh/
 attachments/
 attachments_flat/
 Thunderbird_Root/
-messages/
-sources/
 
-# Internal plans, logs, and tests
-PLAN*.md
-test_*.py
-cleanup_eml.py
-patch_eml.py
+# Internal logs and generated files
 *.log
 summary.csv

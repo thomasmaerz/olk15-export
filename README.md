@@ -1,25 +1,242 @@
 # olk15-export
 
-A set of Python scripts to extract emails and attachments from macOS Outlook 15 (`.olk15Message`, `.olk15MsgSource`, and `.olk15MsgAttachment` files) into standard `.eml`, `Maildir`, or `.mbox` formats.
+Extract emails and attachments from macOS Outlook 15 profiles into standard Maildir format.
 
-**⚠️ Experimental State:** This tool is currently in an experimental state and is provided as-is. Bug reports, issues, and pull requests are highly encouraged!
+Outlook 15 for Mac stores emails in proprietary `.olk15Message`, `.olk15MsgSource`, and `.olk15MsgAttachment` files. This tool reconstructs them into RFC-compliant `.eml` files organized as a Maildir, ready for import into Thunderbird, Apple Mail, or ingestion by downstream tools.
 
 ## Features
-- Bypasses missing header issues by reading `Outlook.sqlite` metadata dynamically.
-- Native injection of attachments directly into the generated `multipart/mixed` `.eml` files.
-- Includes standalone scripts to fix existing extractions and flatten complex attachment folders.
 
-## Tools
-1. `extract_outlook.py`: The core extractor. Run this against your Mac Outlook profile.
-2. `inject_attachments.py`: Post-processing script to embed detached attachments into an existing `Maildir`.
-3. `flatten_attachments.py`: Utility to deduplicate (via MD5 hash) and flatten nested attachment folders into a single directory, resolving filename collisions automatically.
-4. `rebuild_mbox.py`: Utility to stitch extracted `.eml` files into a single `.mbox` archive.
+- **SQLite metadata reconstruction** — Injects headers (From, To, Subject, Date, Message-ID) from `Outlook.sqlite` into emails that lack them in their binary payload
+- **Smart body extraction** — Detects and decodes HTML, RTF, and iCalendar content from binary blobs, including UTF-16-encoded bodies
+- **Native attachment injection** — Embeds detached attachments directly into `multipart/mixed` MIME structures during extraction
+- **Message-ID deduplication** — Skips duplicate emails when both `.olk15MsgSource` and `.olk15Message` exist for the same message
+- **Maildir output** — Writes directly to `Maildir/cur/` for compatibility with standard mail clients and tools
+- **Resumable extraction** — `--max-messages` flag for testing with a subset of your archive
 
-## Usage
-Extract a profile into a Maildir directory:
-```bash
-python3 extract_outlook.py --profile "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile" --output ./output
+## How It Works
+
+```mermaid
+flowchart LR
+    A["Outlook 15 Profile\n.olk15Message\n.olk15MsgSource\n.olk15MsgAttachment\nOutlook.sqlite"] --> B["extract_outlook.py\n3-phase extraction"]
+    B --> C["Maildir/cur/\n107K+ .eml files"]
+    B --> D["attachments/\ndetached files"]
+    B --> E["summary.csv\nmetadata index"]
+    C --> F["emailindex/ingest.py"]
+    F --> G["emails.db\nSQLite + FTS5 + vectors"]
 ```
 
+The output Maildir is consumed by [emailindex](https://github.com/thomasmaerz/emailindex), an email intelligence system that provides full-text search, semantic vector search, and conversation threading via MCP.
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Core
+        E["extract_outlook.py\norchestrator"]
+        W["writer.py\nMaildir + CSV output"]
+    end
+
+    subgraph Parsers
+        M["parsers/message.py\n.olk15Message → MIME"]
+        S["parsers/source.py\n.olk15MsgSource → MIME"]
+        A["parsers/attachment.py\n.olk15MsgAttachment → bytes"]
+        C["parsers/common.py\nMIME integrity fix"]
+    end
+
+    subgraph Output
+        MD["Maildir/cur/"]
+        ATT["attachments/"]
+        CSV["summary.csv"]
+    end
+
+    E -->|"Phase 1"| S
+    E -->|"Phase 2"| M
+    E -->|"Phase 3"| A
+    S -->|"MIME bytes"| W
+    M -->|"MIME bytes"| W
+    A -->|"decoded bytes"| W
+    W --> MD
+    W --> ATT
+    W --> CSV
+    S -.->|"fix_mime_integrity"| C
+```
+
+## Extraction Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Phase 1 ["Phase 1: Message Sources"]
+        S1["Read .olk15MsgSource files"]
+        S2["Strip binary prefix"]
+        S3["Fix MIME integrity"]
+        S1 --> S2 --> S3
+    end
+
+    subgraph Phase 2 ["Phase 2: Messages"]
+        M1["Read .olk15Message files"]
+        M2["Find body start (HTML/RTF/iCal)"]
+        M3["Decode body (UTF-16, UTF-8, chardet)"]
+        M4["Inject headers from Outlook.sqlite"]
+        M5["Inject attachments into MIME"]
+        M1 --> M2 --> M3 --> M4 --> M5
+    end
+
+    subgraph Phase 3 ["Phase 3: Attachments (optional)"]
+        A1["Read .olk15MsgAttachment files"]
+        A2["Parse MIME headers for filename"]
+        A3["Decode base64 body"]
+        A1 --> A2 --> A3
+    end
+
+    subgraph Output ["Write Output"]
+        O1["Write to Maildir/cur/"]
+        O2["Write to attachments/<uuid>/"]
+        O3["Append to summary.csv"]
+    end
+
+    S3 -->|"writer.write_eml"| O1
+    M5 -->|"writer.write_eml"| O1
+    A3 -->|"writer.write_attachment"| O2
+    O1 --> O3
+    O2 --> O3
+```
+
+### Phase details
+
+| Phase | Source | What it does | Priority |
+|-------|--------|-------------|----------|
+| **1** | `Data/Message Sources/*.olk15MsgSource` | Full MIME emails with headers intact — extracted first so duplicates are skipped in Phase 2 | High |
+| **2** | `Data/Messages/*.olk15Message` | Binary cache files — headers reconstructed from `Outlook.sqlite`, body extracted from binary | High |
+| **3** | `Data/Message Attachments/*.olk15MsgAttachment` | Standalone attachment files (only if `--include-attachments` is set) | Optional |
+
+## Quick Start
+
+### Prerequisites
+
+- **Python 3.10+**
+- **macOS** with an Outlook 15 profile
+- **Dependencies**: `pip install chardet`
+
+### Basic Usage
+
+```bash
+# Extract with default settings (outputs to ./output)
+python3 extract_outlook.py
+
+# Specify output directory
+python3 extract_outlook.py --output ./my-export
+
+# Include detached attachments
+python3 extract_outlook.py --include-attachments
+
+# Test with a small subset first
+python3 extract_outlook.py --max-messages 100 --verbose
+
+# Custom profile path
+python3 extract_outlook.py --profile "/path/to/Outlook 15 Profiles/Main Profile" --output ./output
+```
+
+### CLI Reference
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output`, `-o` | `./output` | Output directory for Maildir and attachments |
+| `--profile` | `~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile` | Path to the Outlook 15 profile directory |
+| `--include-attachments` | Off | Also extract `.olk15MsgAttachment` files |
+| `--max-messages`, `-n` | 0 (unlimited) | Stop after processing N messages (useful for testing) |
+| `--verbose`, `-v` | Off | Enable debug logging |
+
+## Output Structure
+
+After extraction, the output directory looks like this:
+
+```
+output/
+├── Maildir/
+│   └── cur/                          # All extracted emails (Maildir format)
+│       ├── 1775174416.639871.2c3cff47P49321MThomass-MacBook-Pro.local:2,
+│       ├── 1775174416.643668.78caa172P49321MThomass-MacBook-Pro.local:2,
+│       └── ...
+├── attachments/
+│   └── <uuid>/                       # Detached attachments per message
+│       └── <filename>
+├── summary.csv                       # Index of all extracted emails
+└── extract.log                       # Extraction log (skips, errors)
+```
+
+### summary.csv
+
+| Column | Description |
+|--------|-------------|
+| `uuid` | Outlook file UUID (stem of `.olk15*` filename) |
+| `source` | Which source type produced this email (`sources` or `messages`) |
+| `message_id` | RFC 2822 Message-ID header |
+| `from` | Sender address |
+| `to` | Recipient addresses |
+| `subject` | Email subject |
+| `date` | Date header |
+| `source_file` | Which parser handled this email |
+
+## Post-Processing Tools
+
+### inject_attachments.py
+
+Embeds detached attachments back into existing `.eml` files by reading the Outlook profile's attachment mapping.
+
+```bash
+python3 inject_attachments.py \
+  --profile "/path/to/Outlook 15 Profiles/Main Profile" \
+  --target ./output/Maildir/cur \
+  --attachments ./output/attachments
+```
+
+### flatten_attachments.py
+
+Deduplicates (via MD5 hash) and flattens nested attachment directories into a single folder, resolving filename collisions automatically.
+
+```bash
+python3 flatten_attachments.py \
+  --source ./output/attachments \
+  --dest ./attachments_flat
+```
+
+### test_harness.py
+
+Runs the extraction pipeline on a limited set of files for testing and validation.
+
+```bash
+python3 test_harness.py --profile "/path/to/Outlook 15 Profiles/Main Profile" --output ./test-output
+```
+
+## Integration with emailindex
+
+The Maildir output from this tool is the primary input for the [emailindex](https://github.com/thomasmaerz/emailindex) email intelligence system:
+
+```mermaid
+flowchart LR
+    A["olk15-export\nMaildir/cur/"] --> B["emailindex/ingest.py"]
+    B --> C["Parse .eml files"]
+    C --> D["Extract body, headers, attachments"]
+    D --> E["Generate embeddings (BAAI/bge-small-en-v1.5)"]
+    E --> F["emails.db\nSQLite + FTS5 + sqlite-vec"]
+    F --> G["MCP Server"]
+    G --> H["AI assistants\nquery emails"]
+```
+
+To ingest your exported emails:
+
+```bash
+cd ~/emailindex
+python3 ingest.py ~/olk15-export/output/Maildir
+```
+
+## Known Limitations
+
+- **Experimental** — This tool was built for a specific macOS Outlook 15 profile. Edge cases may exist with unusual message formats.
+- **TNEF/winmail.dat** — TNEF-encoded attachments are not unpacked. If your emails contain `winmail.dat` files, the contents will not be extracted.
+- **Outlook.sqlite dependency** — Phase 2 (`.olk15Message` extraction) requires the `Outlook.sqlite` database to reconstruct headers. If the database is missing or corrupted, those emails will have minimal headers.
+- **No re-extraction** — The tool does not modify the Outlook profile. It reads files in read-only mode.
+
 ## License
+
 MIT License
