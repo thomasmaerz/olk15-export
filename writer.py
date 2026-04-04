@@ -1,5 +1,5 @@
 from __future__ import annotations
-import csv, email, email.policy, email.message, pathlib, logging, datetime, re, os
+import csv, email, email.policy, email.message, pathlib, logging, datetime, re, os, socket
 from email.parser import BytesParser
 
 log = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class EmlWriter:
             cur_dir = self.maildir_path / "cur"
             cur_dir.mkdir(parents=True, exist_ok=True)
             import uuid as uuid_mod
-            unique_name = f"{datetime.datetime.now().timestamp()}.{uuid_mod.uuid4().hex[:8]}P{os.getpid()}MThomass-MacBook-Pro.local:2,"
+            unique_name = f"{datetime.datetime.now().timestamp()}.{uuid_mod.uuid4().hex[:8]}P{os.getpid()}M{socket.gethostname()}:2,"
             cur_path = cur_dir / unique_name
             cur_path.write_bytes(mime_bytes)
         except Exception as exc:
