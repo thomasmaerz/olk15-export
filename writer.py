@@ -37,11 +37,8 @@ class EmlWriter:
         if msg_id:
             self._seen_ids.add(msg_id)
 
-        # Write .eml
-        eml_dir = self.out / source
-        eml_dir.mkdir(parents=True, exist_ok=True)
-        eml_path = eml_dir / f"{uuid}.eml"
-        eml_path.write_bytes(mime_bytes)
+        # Write to Maildir only (emailindex reads from here)
+        # Note: We no longer write to messages/ or sources/ directories since they're redundant
 
         # Add to Maildir (write directly to cur/ with proper Maildir suffix)
         try:
