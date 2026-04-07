@@ -18,7 +18,7 @@ class TestDecodeFilename:
         """Decode =?UTF-8?Q?...?= encoded-words."""
         raw = '=?UTF-8?Q?hello_world.txt?='
         result = _decode_filename(raw)
-        assert result == "hello_world.txt"
+        assert result == "hello world.txt"
 
     def test_decodes_rfc5987_percent_encoded(self):
         """Decode filename*=UTF-8''percent-encoded format."""
@@ -43,6 +43,18 @@ class TestDecodeFilename:
         raw = '"quoted_name.pdf"'
         result = _decode_filename(raw)
         assert result == "quoted_name.pdf"
+
+    def test_preserves_spaces(self):
+        """Spaces in decoded filenames should be preserved."""
+        raw = "my document.pdf"
+        result = _decode_filename(raw)
+        assert result == "my document.pdf"
+
+    def test_preserves_spaces_in_encoded(self):
+        """Spaces in RFC 2047 encoded filenames should be preserved."""
+        raw = '=?UTF-8?Q?my_document.pdf?='
+        result = _decode_filename(raw)
+        assert " " in result or result == "my document.pdf"
 
 
 class TestSanitizeFilename:

@@ -18,6 +18,9 @@ def _sanitize_filename(filename: str, existing: set[str] | None = None) -> str:
     if len(filename) > 200:
         name, ext = os.path.splitext(filename)
         max_name = 200 - len(ext)
+        if max_name < 1:
+            ext = ext[:200] if len(ext) > 200 else ext
+            max_name = 200 - len(ext)
         filename = name[:max_name] + ext
 
     if existing and filename in existing:

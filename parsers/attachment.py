@@ -30,7 +30,7 @@ def _decode_filename(raw: str) -> str:
                 else:
                     result.append(part)
             decoded = "".join(result)
-            return decoded.replace(" ", "_")
+            return decoded
         except Exception:
             pass
 
