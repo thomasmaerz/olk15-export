@@ -94,6 +94,8 @@ The `Mail_OwnedBlocks` join table in `Outlook.sqlite` links messages to their so
 
 Since ~5,400 emails exist in both formats with different UUIDs, the extraction pipeline processes `.olk15MsgSource` files first (complete MIME wins), then skips any `.olk15Message` files that share the same `Message-ID` header. This ensures the highest-fidelity version is always kept.
 
+Message-IDs are normalized before comparison: angle brackets (`<>`) and surrounding whitespace are stripped so that `<BYAPR15MB1234@outlook.com>` and `BYAPR15MB1234@outlook.com` are correctly identified as duplicates.
+
 ## Architecture
 
 ```mermaid

@@ -30,7 +30,7 @@ class EmlWriter:
             return False
 
 
-        msg_id = (msg.get("Message-ID") or "").strip()
+        msg_id = (msg.get("Message-ID") or "").strip().strip("<>")
         if msg_id and msg_id in self._seen_ids:
             log.debug("Skipping duplicate Message-ID %s (uuid=%s)", msg_id, uuid)
             return False
