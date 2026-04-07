@@ -78,7 +78,7 @@ flowchart LR
 | **Headers** | Embedded in the MIME itself | Reconstructed from `Outlook.sqlite` metadata |
 | **Parsing** | Strip binary prefix, find MIME markers, fix line endings | Find body start, decode (UTF-16/UTF-8/chardet), rebuild MIME |
 | **Reliability** | High — this is the actual email as received/sent | Lower — requires piecing together from DB |
-| **Coverage** | ~5,400 messages (only emails with source blocks) | ~78,890 messages (all cached emails) |
+| **Sample % coverage** | 7% | 100% |
 
 ### Why Both Exist
 
