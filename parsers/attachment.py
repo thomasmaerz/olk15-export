@@ -36,44 +36,37 @@ def _decode_filename(raw: str) -> str:
 
     return raw
 
-def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | None:
+def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | tuple[None, str] | None:
     """
     Parse .olk15MsgAttachment file.
-    Returns list of (filename, content_type, decoded_bytes) or None if unparseable.
+    Returns list of (filename, content_type, decoded_bytes) on success.
+    Returns (None, reason_str) on failure for diagnostics.
+    Returns None only for truly empty/invalid input.
     For TNEF attachments, returns multiple tuples (one per extracted file).
     For regular attachments, returns a single-element list.
     """
-    # Find MIME headers start
+    if not data or len(data) < 16:
+        return None
+
     idx = data.lower().find(b"content-type:")
     if idx < 0:
-        return None
+        return (None, "no Content-Type header")
     mime_section = data[idx:]
 
-    # Find the start of headers
-    header_start = mime_section.find(b"Content-Type:")
-    if header_start < 0:
-        header_start = mime_section.find(b"content-type:")
-    
-    # Debug
-    # print(f"DEBUG: mime_section={mime_section!r}")
-    
-    # Find the start of headers
     header_start = mime_section.lower().find(b"content-type:")
     if header_start < 0:
-        return None
-    
-    # Headers end at the first double-newline
+        return (None, "no Content-Type header")
+
     body_sep = re.search(rb"(\r\n\r\n|\n\n|\r\r)", mime_section[header_start:])
     if not body_sep:
-        return None
-    
+        return (None, "no header/body separator")
+
     sep_start = header_start + body_sep.start()
     sep_end = header_start + body_sep.end()
-    
+
     headers_raw = mime_section[header_start:sep_start]
     body_raw = mime_section[sep_end:]
-    
-    # Normalize headers for parsing
+
     headers_text = headers_raw.replace(b"\r\n", b"\r").replace(b"\n", b"\r")
     headers_text = headers_text.replace(b"\r\t", b" ").replace(b"\r ", b" ")
     header_lines = headers_text.split(b"\r")
@@ -110,21 +103,15 @@ def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | None:
 
     if encoding == "base64":
         try:
-            # Outlook sometimes splits base64 blocks with '=' and newlines
-            # We must join them correctly.
-            
-            # The most robust way to decode concatenated base64 is to split by '=' 
-            # and decode each chunk, or just find each 4-char block.
-            # But usually, it's just a single blob that might have been split.
-            
-            # Remove all whitespace characters
             clean_body = re.sub(rb"\s+", b"", body_raw)
             
-            # Split by '=' and decode each non-empty part
+            valid_chars = set(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+            if not all(c in valid_chars for c in clean_body):
+                raise ValueError("invalid base64 characters")
+            
             parts = [p for p in clean_body.split(b"=") if p]
             decoded_parts = []
             for p in parts:
-                # Add back required padding for this specific part
                 missing_padding = len(p) % 4
                 if missing_padding:
                     p += b"=" * (4 - missing_padding)
@@ -133,7 +120,7 @@ def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | None:
 
 
         except Exception:
-            return None
+            return (None, "base64 decode failed")
     else:
         decoded = body_raw
 

@@ -84,7 +84,7 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
     log.info("Loaded metadata for %d messages.", len(meta))
     return meta
 
-def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False) -> None:
+def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False, debug_unparseable: bool = False) -> None:
     """Run extraction with optional message limit."""
     metadata = load_metadata(profile)
     writer = EmlWriter(output_dir)
@@ -143,7 +143,8 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                         full_att_path = profile / "Data" / att_path
                         if full_att_path.exists():
                             res = parse_attachment(full_att_path.read_bytes())
-                            if res: att_data_list.append(res)
+                            if res:
+                                att_data_list.extend(res)
                             
                 mime = parse_message(path.read_bytes(), msg_meta, att_data_list)
                 if mime is None:
@@ -166,6 +167,7 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
             att_files = walk_files(att_dir, ".olk15MsgAttachment")
             log.info("Processing %d .olk15MsgAttachment files...", total)
             ok = skipped = errors = 0
+            debug_dir = output_dir / "debug_attachments"
             for i, path in enumerate(att_files, 1):
                 if i % 1000 == 0:
                     log.info("  attachments: %d/%d (ok=%d skipped=%d errors=%d)", i, total, ok, skipped, errors)
@@ -173,10 +175,19 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                     result = parse_attachment(path.read_bytes())
                     if result is None:
                         skipped += 1
-                        error_log.write(f"SKIP\tattachments\t{path.name}\tunparseable\n")
+                        error_log.write(f"SKIP\tattachments\t{path.name}\tempty or invalid file\n")
                         continue
-                    filename, _content_type, data = result
-                    writer.write_attachment(path.stem, filename, data)
+                    if isinstance(result, tuple) and result[0] is None:
+                        _, reason = result
+                        skipped += 1
+                        error_log.write(f"SKIP\tattachments\t{path.name}\t{reason}\n")
+                        if debug_unparseable:
+                            debug_dir.mkdir(parents=True, exist_ok=True)
+                            debug_path = debug_dir / f"{path.name}.bin"
+                            debug_path.write_bytes(path.read_bytes()[:256])
+                        continue
+                    for filename, _content_type, data in result:
+                        writer.write_attachment(path.stem, filename, data)
                     ok += 1
                 except Exception as exc:
                     errors += 1
@@ -206,6 +217,7 @@ def main():
     parser.add_argument("--attachments-to-disk", action="store_true", help="Extract attachment files to disk")
     parser.add_argument("--include-attachments", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flatten-attachments", action="store_true", help="Flatten and deduplicate extracted attachments into attachments/flat/")
+    parser.add_argument("--debug-unparseable", action="store_true", help="Save first 256 bytes of unparseable attachments for analysis")
     parser.add_argument("--max-messages", "-n", type=int, default=0, help="Maximum number of messages to extract (0=unlimited)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
@@ -232,7 +244,7 @@ def main():
         log.error("Profile directory not found: %s", profile)
         sys.exit(1)
 
-    run(output_dir, args.attachments_to_disk or args.include_attachments, profile, args.max_messages, flatten=args.flatten_attachments)
+    run(output_dir, args.attachments_to_disk or args.include_attachments, profile, args.max_messages, flatten=args.flatten_attachments, debug_unparseable=args.debug_unparseable)
 
 if __name__ == "__main__":
     main()
