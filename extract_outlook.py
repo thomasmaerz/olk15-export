@@ -84,15 +84,36 @@ def load_metadata(profile: pathlib.Path) -> dict[str, dict]:
     log.info("Loaded metadata for %d messages.", len(meta))
     return meta
 
-def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False, debug_unparseable: bool = False) -> None:
+
+def load_processed_uuids(csv_path: pathlib.Path) -> set[str]:
+    """Load already-processed UUIDs from summary.csv to support resumption."""
+    processed = set()
+    if csv_path.exists():
+        try:
+            with open(csv_path, "r", encoding="utf-8") as f:
+                next(f)  # skip header
+                for line in f:
+                    parts = line.strip().split(",")
+                    if parts:
+                        processed.add(parts[0])
+            log.info("Resuming: found %d already-processed messages", len(processed))
+        except Exception as e:
+            log.warning("Could not load resume checkpoint: %s", e)
+    return processed
+
+def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False, debug_unparseable: bool = False, resume: bool = True) -> None:
     """Run extraction with optional message limit."""
     metadata = load_metadata(profile)
-    writer = EmlWriter(output_dir)
+    writer = EmlWriter(output_dir, resume=resume)
     error_log_path = output_dir / "extract.log"
     
-    success_count = 0
+    # Load already-processed UUIDs for resumption
+    csv_path = output_dir / "summary.csv"
+    processed_uuids = load_processed_uuids(csv_path)
+    
+    success_count = len(processed_uuids)
     write_ok = True
-    with open(error_log_path, "w", encoding="utf-8") as error_log:
+    with open(error_log_path, "a", encoding="utf-8") as error_log:
         # --- Phase 2: .olk15MsgSource files (processed first for deduplication priority) ---
         src_dir = profile / "Data" / "Message Sources"
         log.info("Counting files in %s...", src_dir)
@@ -101,6 +122,8 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
         log.info("Processing %d .olk15MsgSource files...", total)
         ok = skipped = errors = 0
         for i, path in enumerate(src_files, 1):
+            if path.stem in processed_uuids:
+                continue
             if max_messages > 0 and success_count >= max_messages:
                 log.info("Reached max messages limit (%d), stopping sources phase", max_messages)
                 break
@@ -128,6 +151,8 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
         log.info("Processing %d .olk15Message files...", total)
         ok = skipped = errors = 0
         for i, path in enumerate(msg_files, 1):
+            if path.stem in processed_uuids:
+                continue
             if max_messages > 0 and success_count >= max_messages:
                 log.info("Reached max messages limit (%d), stopping messages phase", max_messages)
                 break
@@ -144,6 +169,8 @@ def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Pa
                         if full_att_path.exists():
                             res = parse_attachment(full_att_path.read_bytes())
                             if res:
+                                if isinstance(res, tuple) and res[0] is None:
+                                    continue
                                 att_data_list.extend(res)
                             
                 mime = parse_message(path.read_bytes(), msg_meta, att_data_list)

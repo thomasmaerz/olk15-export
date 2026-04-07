@@ -1,9 +1,11 @@
 # parsers/attachment.py
 from __future__ import annotations
-import base64, re
+import base64, logging, re
 from parsers.tnef import is_tnef, unpack_tnef
 from email.header import decode_header
 from urllib.parse import unquote
+
+log = logging.getLogger("extract_outlook.attachment")
 
 
 def _decode_filename(raw: str) -> str:
@@ -35,6 +37,24 @@ def _decode_filename(raw: str) -> str:
             pass
 
     return raw
+
+def _make_rfc822_filename(body: bytes, fallback: str) -> str:
+    """Extract Subject from forwarded email body to create useful filename."""
+    try:
+        body_str = body.decode("utf-8", errors="replace")
+    except Exception:
+        return fallback
+
+    for line in body_str.splitlines():
+        if line.lower().startswith("subject:"):
+            subject = line.split(":", 1)[1].strip()
+            if subject:
+                slug = re.sub(r"[^a-z0-9]+", "-", subject.lower().strip("-"))
+                if len(slug) > 50:
+                    slug = slug[:50].rstrip("-")
+                return f"forwarded_{slug}.eml"
+
+    return fallback if fallback != "attachment" else "forwarded_message.eml"
 
 def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | tuple[None, str] | None:
     """
@@ -75,6 +95,7 @@ def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | tuple[None, 
     content_type = ""
     filename = ""
     encoding = "base64"
+    has_cte_header = False
 
     for line in header_lines:
         line_s = line.decode("ascii", errors="replace")
@@ -97,11 +118,20 @@ def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | tuple[None, 
                     filename = _decode_filename(p.split("=", 1)[1].strip().strip('"'))
         elif low.startswith("content-transfer-encoding:"):
             encoding = line_s.split(":", 1)[1].strip().lower()
+            has_cte_header = True
 
     if not filename:
         filename = "attachment"
 
-    if encoding == "base64":
+    if content_type.startswith("message/") and not has_cte_header:
+        filename = _make_rfc822_filename(body_raw, filename)
+        decoded = body_raw
+        if is_tnef(filename=filename, content_type=content_type, data=decoded):
+            extracted = unpack_tnef(decoded)
+            if extracted:
+                return extracted
+        return [(filename, content_type, decoded)]
+    elif encoding == "base64":
         try:
             clean_body = re.sub(rb"\s+", b"", body_raw)
             
@@ -120,6 +150,12 @@ def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | tuple[None, 
 
 
         except Exception:
+            log.warning(
+                "attachment decode failed: content_type=%r encoding=%s body_preview=%r",
+                content_type,
+                encoding,
+                body_raw[:80].hex() if body_raw else b"",
+            )
             return (None, "base64 decode failed")
     else:
         decoded = body_raw
