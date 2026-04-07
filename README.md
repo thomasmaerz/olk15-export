@@ -27,6 +27,73 @@ flowchart LR
 
 The output Maildir is consumed by [emailindex](https://github.com/thomasmaerz/emailindex), an email intelligence system that provides full-text search, semantic vector search, and conversation threading via MCP.
 
+## Outlook 15 Source Data Structure
+
+Outlook 15 for Mac splits each email across multiple proprietary files and a SQLite database. Understanding this structure is key to knowing why the extraction pipeline works the way it does.
+
+### File Layout
+
+```
+Outlook 15 Profiles/Main Profile/Data/
+├── Outlook.sqlite                          ← Metadata database (headers, threads, attachments)
+├── Messages/                               ← Binary cache files (body only, no headers)
+│   ├── <UUID-A>.olk15Message               ← HTML/RTF/iCal body blob
+│   └── ...
+├── Message Sources/                        ← Native MIME files (complete emails)
+│   ├── <UUID-B>.olk15MsgSource             ← Full MIME with all headers
+│   └── ...
+└── Message Attachments/                    ← Detached attachment files
+    └── <UUID-C>.olk15MsgAttachment         ← MIME-encoded attachment
+```
+
+### How the Pieces Relate
+
+```mermaid
+flowchart LR
+    subgraph SQLite["Outlook.sqlite"]
+        Mail["Mail table\n(PathToDataFile, headers,\nMessage-ID, thread_id)"]
+        Blocks["Blocks table\n(file paths, content)"]
+        MOB["Mail_OwnedBlocks\n(join table)"]
+    end
+
+    subgraph Files["File System"]
+        Msg["Messages/\n*.olk15Message\n(body only)"]
+        Src["Message Sources/\n*.olk15MsgSource\n(full MIME)"]
+        Att["Message Attachments/\n*.olk15MsgAttachment"]
+    end
+
+    Mail -->|"PathToDataFile →"| Msg
+    MOB -->|"links message to source"| Src
+    Blocks -->|"stores source paths"| Src
+    MOB -->|"BlockTag=1098151011"| Att
+```
+
+### Key Differences Between File Types
+
+| | `.olk15MsgSource` | `.olk15Message` |
+|---|---|---|
+| **Location** | `Data/Message Sources/` | `Data/Messages/` |
+| **Content** | Complete native MIME with all headers, body, and structure intact | Binary cache — body blob (HTML/RTF/iCal) only, no headers |
+| **MIME parts** | `text/plain` + `text/html` + `text/calendar` (all present) | Reconstructed from binary — only the body format found |
+| **Headers** | Embedded in the MIME itself | Reconstructed from `Outlook.sqlite` metadata |
+| **Parsing** | Strip binary prefix, find MIME markers, fix line endings | Find body start, decode (UTF-16/UTF-8/chardet), rebuild MIME |
+| **Reliability** | High — this is the actual email as received/sent | Lower — requires piecing together from DB |
+| **Coverage** | ~5,400 messages (only emails with source blocks) | ~78,890 messages (all cached emails) |
+
+### Why Both Exist
+
+Outlook 15 uses a two-tier caching strategy:
+
+1. **`.olk15MsgSource`** — The actual email bytes as received from the server. Stored for messages that Outlook has fully downloaded. Only ~7% of messages have a source file.
+
+2. **`.olk15Message`** — A binary cache of the body content, used for quick rendering in the message list. Every viewed email gets one, regardless of whether the full source was downloaded.
+
+The `Mail_OwnedBlocks` join table in `Outlook.sqlite` links messages to their source files using completely different UUIDs — there's no filename-based pairing.
+
+### Deduplication Strategy
+
+Since ~5,400 emails exist in both formats with different UUIDs, the extraction pipeline processes `.olk15MsgSource` files first (complete MIME wins), then skips any `.olk15Message` files that share the same `Message-ID` header. This ensures the highest-fidelity version is always kept.
+
 ## Architecture
 
 ```mermaid
