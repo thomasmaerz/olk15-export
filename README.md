@@ -309,7 +309,6 @@ python3 ingest.py ~/olk15-export/output/Maildir
 ## Known Limitations
 
 - **Experimental** — This tool was built for a specific macOS Outlook 15 profile. Edge cases may exist with unusual message formats.
-- **TNEF/winmail.dat** — TNEF-encoded attachments are not unpacked. If your emails contain `winmail.dat` files, the contents will not be extracted.
 - **Outlook.sqlite dependency** — Phase 2 (`.olk15Message` extraction) requires the `Outlook.sqlite` database to reconstruct headers. If the database is missing or corrupted, those emails will have minimal headers.
 - **No re-extraction** — The tool does not modify the Outlook profile. It reads files in read-only mode.
 

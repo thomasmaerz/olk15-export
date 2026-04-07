@@ -2,6 +2,7 @@
 name = "olk15-export"
 version = "0.1.0"
 requires-python = ">=3.10"
+dependencies = ["tnefparse>=1.4.0"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
