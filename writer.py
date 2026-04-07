@@ -1,10 +1,33 @@
 from __future__ import annotations
-import csv, email, email.policy, email.message, pathlib, logging, datetime, re, os, socket
+import csv, email, email.policy, email.message, pathlib, logging, datetime, re, os, socket, unicodedata
 from email.parser import BytesParser
 
 log = logging.getLogger(__name__)
 
 CSV_FIELDS = ["uuid", "source", "message_id", "from", "to", "subject", "date", "source_file"]
+
+
+def _sanitize_filename(filename: str, existing: set[str] | None = None) -> str:
+    """Make a filename safe for filesystem use."""
+    filename = unicodedata.normalize("NFC", filename)
+    filename = filename.strip()
+
+    for ch in ["/", "\\", ":", "*", "?", '"', "<", ">", "|"]:
+        filename = filename.replace(ch, "_")
+
+    if len(filename) > 200:
+        name, ext = os.path.splitext(filename)
+        max_name = 200 - len(ext)
+        filename = name[:max_name] + ext
+
+    if existing and filename in existing:
+        name, ext = os.path.splitext(filename)
+        counter = 1
+        while f"{name}_{counter}{ext}" in existing:
+            counter += 1
+        filename = f"{name}_{counter}{ext}"
+
+    return filename if filename else "attachment"
 
 class EmlWriter:
     def __init__(self, output_dir: pathlib.Path):
@@ -64,11 +87,16 @@ class EmlWriter:
         })
         return True
 
-    def write_attachment(self, uuid: str, filename: str, data: bytes) -> None:
-        """Write decoded attachment bytes to output/attachments/<uuid>/<filename>."""
+    def write_attachment(self, uuid: str, filename: str, data: bytes) -> str:
+        """Write decoded attachment bytes. Returns sanitized filename."""
         att_dir = self.out / "attachments" / uuid
         att_dir.mkdir(parents=True, exist_ok=True)
-        (att_dir / filename).write_bytes(data)
+
+        existing = {f.name for f in att_dir.iterdir()} if att_dir.exists() else set()
+        safe_name = _sanitize_filename(filename, existing=existing)
+
+        (att_dir / safe_name).write_bytes(data)
+        return safe_name
 
     def flush(self) -> None:
         self._csv_file.flush()

@@ -1,11 +1,47 @@
 # parsers/attachment.py
 from __future__ import annotations
 import base64, re
+from parsers.tnef import is_tnef, unpack_tnef
+from email.header import decode_header
+from urllib.parse import unquote
 
-def parse_attachment(data: bytes) -> tuple[str, str, bytes] | None:
+
+def _decode_filename(raw: str) -> str:
+    """Decode RFC 2047 encoded-words and RFC 5987 percent-encoded filenames."""
+    raw = raw.strip().strip('"')
+
+    # Try RFC 5987: charset''percent-encoded
+    if "''" in raw:
+        parts = raw.split("''", 1)
+        if len(parts) == 2:
+            try:
+                return unquote(parts[1], encoding=parts[0] or "utf-8")
+            except Exception:
+                pass
+
+    # Try RFC 2047: =?charset?encoding?text?=
+    if "=?" in raw:
+        try:
+            decoded_parts = decode_header(raw)
+            result = []
+            for part, charset in decoded_parts:
+                if isinstance(part, bytes):
+                    result.append(part.decode(charset or "utf-8", errors="replace"))
+                else:
+                    result.append(part)
+            decoded = "".join(result)
+            return decoded.replace(" ", "_")
+        except Exception:
+            pass
+
+    return raw
+
+def parse_attachment(data: bytes) -> list[tuple[str, str, bytes]] | None:
     """
     Parse .olk15MsgAttachment file.
-    Returns (filename, content_type, decoded_bytes) or None if unparseable.
+    Returns list of (filename, content_type, decoded_bytes) or None if unparseable.
+    For TNEF attachments, returns multiple tuples (one per extracted file).
+    For regular attachments, returns a single-element list.
     """
     # Find MIME headers start
     idx = data.lower().find(b"content-type:")
@@ -55,13 +91,17 @@ def parse_attachment(data: bytes) -> tuple[str, str, bytes] | None:
             content_type = parts[0].split(":", 1)[1].strip()
             for p in parts[1:]:
                 p = p.strip()
-                if p.lower().startswith("name="):
-                    filename = p.split("=", 1)[1].strip().strip('"')
+                if p.lower().startswith("name*="):
+                    filename = _decode_filename(p.split("=", 1)[1].strip().strip('"'))
+                elif p.lower().startswith("name="):
+                    filename = _decode_filename(p.split("=", 1)[1].strip().strip('"'))
         elif low.startswith("content-disposition:"):
             for p in line_s.split(";")[1:]:
                 p = p.strip()
-                if p.lower().startswith("filename="):
-                    filename = p.split("=", 1)[1].strip().strip('"')
+                if p.lower().startswith("filename*="):
+                    filename = _decode_filename(p.split("=", 1)[1].strip().strip('"'))
+                elif p.lower().startswith("filename="):
+                    filename = _decode_filename(p.split("=", 1)[1].strip().strip('"'))
         elif low.startswith("content-transfer-encoding:"):
             encoding = line_s.split(":", 1)[1].strip().lower()
 
@@ -97,4 +137,10 @@ def parse_attachment(data: bytes) -> tuple[str, str, bytes] | None:
     else:
         decoded = body_raw
 
-    return filename, content_type, decoded
+    if is_tnef(filename=filename, content_type=content_type, data=decoded):
+        extracted = unpack_tnef(decoded)
+        if extracted:
+            return extracted
+        return [(filename, content_type, decoded)]
+
+    return [(filename, content_type, decoded)]
