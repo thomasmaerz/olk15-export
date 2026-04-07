@@ -48,25 +48,33 @@ class EmlWriter:
 
     def write_eml(self, uuid: str, mime_bytes: bytes, source: str) -> bool:
         """Write MIME bytes as .eml file and add to Maildir. Returns False if duplicate Message-ID."""
+        msg = None
         try:
-            # Use compat32 for more lenient parsing of non-standard headers
             msg = BytesParser(policy=email.policy.compat32).parsebytes(mime_bytes)
         except Exception as exc:
-            log.warning("Failed to parse MIME for %s: %s", uuid, exc)
-            return False
+            log.warning("Failed to parse MIME for %s, writing raw bytes: %s", uuid, exc)
 
+        msg_id = ""
+        if msg is not None:
+            msg_id = (msg.get("Message-ID") or "").strip().strip("<>")
+            if msg_id and msg_id in self._seen_ids:
+                log.debug("Skipping duplicate Message-ID %s (uuid=%s)", msg_id, uuid)
+                return False
+            if msg_id:
+                self._seen_ids.add(msg_id)
+        else:
+            for line in mime_bytes.split(b"\r\n")[:50]:
+                if line.lower().startswith(b"message-id:"):
+                    raw_id = line.split(b":", 1)[1].strip().decode("ascii", errors="replace")
+                    msg_id = raw_id.strip("<> ")
+                    if msg_id and msg_id in self._seen_ids:
+                        log.debug("Skipping duplicate Message-ID %s (uuid=%s)", msg_id, uuid)
+                        return False
+                    if msg_id:
+                        self._seen_ids.add(msg_id)
+                    break
 
-        msg_id = (msg.get("Message-ID") or "").strip().strip("<>")
-        if msg_id and msg_id in self._seen_ids:
-            log.debug("Skipping duplicate Message-ID %s (uuid=%s)", msg_id, uuid)
-            return False
-        if msg_id:
-            self._seen_ids.add(msg_id)
-
-        # Write to Maildir only (emailindex reads from here)
-        # Note: We no longer write to messages/ or sources/ directories since they're redundant
-
-        # Add to Maildir (write directly to cur/ with proper Maildir suffix)
+        # Add to Maildir
         try:
             cur_dir = self.maildir_path / "cur"
             cur_dir.mkdir(parents=True, exist_ok=True)
@@ -78,16 +86,33 @@ class EmlWriter:
             log.error("Failed to add message %s to Maildir: %s", uuid, exc)
 
         # Write CSV row
-        self._csv_writer.writerow({
-            "uuid": uuid,
-            "source": source,
-            "message_id": msg_id,
-            "from": str(msg.get("From", "")),
-            "to": str(msg.get("To", "")),
-            "subject": str(msg.get("Subject", "")),
-            "date": str(msg.get("Date", "")),
-            "source_file": source,
-        })
+        if msg is not None:
+            self._csv_writer.writerow({
+                "uuid": uuid,
+                "source": source,
+                "message_id": msg_id,
+                "from": str(msg.get("From", "")),
+                "to": str(msg.get("To", "")),
+                "subject": str(msg.get("Subject", "")),
+                "date": str(msg.get("Date", "")),
+                "source_file": source,
+            })
+        else:
+            headers = {}
+            for line in mime_bytes.split(b"\r\n")[:50]:
+                if b":" in line:
+                    key, _, val = line.partition(b":")
+                    headers[key.decode("ascii", errors="replace").lower()] = val.decode("utf-8", errors="replace").strip()
+            self._csv_writer.writerow({
+                "uuid": uuid,
+                "source": source,
+                "message_id": msg_id,
+                "from": headers.get("from", ""),
+                "to": headers.get("to", ""),
+                "subject": headers.get("subject", ""),
+                "date": headers.get("date", ""),
+                "source_file": source,
+            })
         return True
 
     def write_attachment(self, uuid: str, filename: str, data: bytes) -> str:
