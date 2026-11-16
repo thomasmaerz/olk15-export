@@ -195,6 +195,9 @@ python3 extract_outlook.py
 # Specify output directory
 python3 extract_outlook.py --output ./my-export
 
+# Use filenames ending in .eml instead of Maildir status suffixes
+python3 extract_outlook.py --output ./my-export --eml-extension
+
 # Include detached attachments
 python3 extract_outlook.py --attachments-to-disk
 
@@ -217,6 +220,7 @@ python3 extract_outlook.py --profile "/path/to/Outlook 15 Profiles/Main Profile"
 | `--attachments-to-disk` | Off | Extract attachment files to disk |
 | `--include-attachments` | Off | **Deprecated** — alias for `--attachments-to-disk` |
 | `--flatten-attachments` | Off | Flatten and deduplicate extracted attachments into `attachments/flat/` |
+| `--eml-extension` | Off | Append `.eml` to exported message filenames (still stored in `Maildir/cur/`) |
 | `--max-messages`, `-n` | 0 (unlimited) | Stop after processing N messages (useful for testing) |
 | `--verbose`, `-v` | Off | Enable debug logging |
 
