@@ -33,18 +33,25 @@ def _sanitize_filename(filename: str, existing: set[str] | None = None) -> str:
     return filename if filename else "attachment"
 
 class EmlWriter:
-    def __init__(self, output_dir: pathlib.Path):
+    def __init__(
+        self, output_dir: pathlib.Path, resume: bool = True, eml_extension: bool = False
+    ):
         self.out = output_dir
         self.out.mkdir(parents=True, exist_ok=True)
         self._seen_ids: set[str] = set()
+        self.eml_extension = eml_extension
         
         # Initialize Maildir
         self.maildir_path = self.out / "Maildir"
         
         self._csv_path = self.out / "summary.csv"
-        self._csv_file = open(self._csv_path, "w", newline="", encoding="utf-8")
+        append = resume and self._csv_path.exists() and self._csv_path.stat().st_size > 0
+        self._csv_file = open(
+            self._csv_path, "a" if append else "w", newline="", encoding="utf-8"
+        )
         self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=CSV_FIELDS)
-        self._csv_writer.writeheader()
+        if not append:
+            self._csv_writer.writeheader()
 
     def write_eml(self, uuid: str, mime_bytes: bytes, source: str) -> bool:
         """Write MIME bytes as .eml file and add to Maildir. Returns False if duplicate Message-ID."""
@@ -79,7 +86,11 @@ class EmlWriter:
             cur_dir = self.maildir_path / "cur"
             cur_dir.mkdir(parents=True, exist_ok=True)
             import uuid as uuid_mod
-            unique_name = f"{datetime.datetime.now().timestamp()}.{uuid_mod.uuid4().hex[:8]}P{os.getpid()}M{socket.gethostname()}:2,"
+            unique_name = f"{datetime.datetime.now().timestamp()}.{uuid_mod.uuid4().hex[:8]}P{os.getpid()}M{socket.gethostname()}"
+            if self.eml_extension:
+                unique_name += ".eml"
+            else:
+                unique_name += ":2,"
             cur_path = cur_dir / unique_name
             cur_path.write_bytes(mime_bytes)
         except Exception as exc:
@@ -129,4 +140,3 @@ class EmlWriter:
     def flush(self) -> None:
         self._csv_file.flush()
         self._csv_file.close()
-

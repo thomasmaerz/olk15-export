@@ -3,7 +3,7 @@
 """Extract email data from a macOS Outlook 15 profile to .eml / .mbox / attachments."""
 from __future__ import annotations
 
-import argparse, logging, pathlib, sys, sqlite3, urllib.parse
+import argparse, csv, logging, pathlib, sys, sqlite3, urllib.parse
 from parsers.message import parse_message
 from parsers.source import parse_source
 from parsers.attachment import parse_attachment
@@ -90,26 +90,24 @@ def load_processed_uuids(csv_path: pathlib.Path) -> set[str]:
     processed = set()
     if csv_path.exists():
         try:
-            with open(csv_path, "r", encoding="utf-8") as f:
-                next(f)  # skip header
-                for line in f:
-                    parts = line.strip().split(",")
-                    if parts:
-                        processed.add(parts[0])
+            with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                for row in csv.DictReader(f):
+                    if row.get("uuid"):
+                        processed.add(row["uuid"])
             log.info("Resuming: found %d already-processed messages", len(processed))
         except Exception as e:
             log.warning("Could not load resume checkpoint: %s", e)
     return processed
 
-def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False, debug_unparseable: bool = False, resume: bool = True) -> None:
+def run(output_dir: pathlib.Path, include_attachments: bool, profile: pathlib.Path, max_messages: int = 0, flatten: bool = False, debug_unparseable: bool = False, resume: bool = True, eml_extension: bool = False) -> None:
     """Run extraction with optional message limit."""
     metadata = load_metadata(profile)
-    writer = EmlWriter(output_dir, resume=resume)
     error_log_path = output_dir / "extract.log"
     
     # Load already-processed UUIDs for resumption
     csv_path = output_dir / "summary.csv"
-    processed_uuids = load_processed_uuids(csv_path)
+    processed_uuids = load_processed_uuids(csv_path) if resume else set()
+    writer = EmlWriter(output_dir, resume=resume, eml_extension=eml_extension)
     
     success_count = len(processed_uuids)
     write_ok = True
@@ -244,6 +242,7 @@ def main():
     parser.add_argument("--attachments-to-disk", action="store_true", help="Extract attachment files to disk")
     parser.add_argument("--include-attachments", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flatten-attachments", action="store_true", help="Flatten and deduplicate extracted attachments into attachments/flat/")
+    parser.add_argument("--eml-extension", action="store_true", help="Append .eml to exported message filenames")
     parser.add_argument("--debug-unparseable", action="store_true", help="Save first 256 bytes of unparseable attachments for analysis")
     parser.add_argument("--max-messages", "-n", type=int, default=0, help="Maximum number of messages to extract (0=unlimited)")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -271,7 +270,7 @@ def main():
         log.error("Profile directory not found: %s", profile)
         sys.exit(1)
 
-    run(output_dir, args.attachments_to_disk or args.include_attachments, profile, args.max_messages, flatten=args.flatten_attachments, debug_unparseable=args.debug_unparseable)
+    run(output_dir, args.attachments_to_disk or args.include_attachments, profile, args.max_messages, flatten=args.flatten_attachments, debug_unparseable=args.debug_unparseable, eml_extension=args.eml_extension)
 
 if __name__ == "__main__":
     main()

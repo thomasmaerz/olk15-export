@@ -38,6 +38,16 @@ class TestWriteEmlFallback:
         mime = make_valid_mime()
         result = writer.write_eml("uuid1", mime, source="messages")
         assert result is True
+        assert len(list((tmp_path / "Maildir" / "cur").iterdir())) == 1
+        assert next((tmp_path / "Maildir" / "cur").iterdir()).name.endswith(":2,")
+
+    def test_eml_extension_uses_eml_suffix(self, tmp_path: pathlib.Path):
+        writer = EmlWriter(tmp_path, eml_extension=True)
+        result = writer.write_eml("uuid1", make_valid_mime(), source="messages")
+        assert result is True
+        filenames = [path.name for path in (tmp_path / "Maildir" / "cur").iterdir()]
+        assert len(filenames) == 1
+        assert filenames[0].endswith(".eml")
 
     def test_malformed_mime_falls_back_to_raw_write(self, tmp_path: pathlib.Path):
         writer = EmlWriter(tmp_path)
